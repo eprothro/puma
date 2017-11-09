@@ -24,6 +24,10 @@ module Puma
     def run_internal
       sockets = @sockets
 
+      debug_p = lambda do |msg|
+        puts "\e[1;34mt: #{debug_time}, pid: #{$$}, thread: #{Thread.current.object_id.to_s.slice(-5,5)}, reactor: #{self.object_id.to_s.slice(-5,5)}, reading: #{sockets.size}, waiting: #{@input.size}, msg: #{msg}\e[0m"
+      end
+
       while true
         begin
           ready = IO.select sockets, nil, nil, @sleep_for
@@ -39,9 +43,15 @@ module Puma
           end
         end
 
+        if ready
+          debug_p.call("reactor selected sockets")
+        else
+          debug_p.call("reactor timed out waiting for ready sockets")
+        end
         if ready and reads = ready[0]
           reads.each do |c|
             if c == @ready
+              debug_p.call("reactor selected ready for read")
               @mutex.synchronize do
                 case @ready.read(1)
                 when "*"
@@ -52,6 +62,7 @@ module Puma
                     if s == @ready
                       false
                     else
+                      debug_p.call("clearing #{s.object_id.to_s.slice(-5,5)}")
                       s.close
                       true
                     end
@@ -61,6 +72,7 @@ module Puma
                 end
               end
             else
+              debug_p.call("reactor selected connection for read #{c.object_id.to_s.slice(-5,5)}")
               # We have to be sure to remove it from the timeout
               # list or we'll accidentally close the socket when
               # it's in use!
@@ -72,6 +84,7 @@ module Puma
 
               begin
                 if c.try_to_finish
+                  debug_p.call("done reading #{c.object_id.to_s.slice(-5,5)}")
                   @app_pool << c
                   sockets.delete c
                 end
@@ -128,6 +141,7 @@ module Puma
               c = @timeouts.shift
               c.write_408 if c.in_data_phase
               c.close
+              debug_p.call("timeout:408 aborting reading #{c.object_id.to_s.slice(-5,5)}")
               sockets.delete c
 
               break if @timeouts.empty?
@@ -179,6 +193,7 @@ module Puma
 
     def add(c)
       @mutex.synchronize do
+        debug_p("receiving request (#{c.object_id.to_s.slice(-5,5)})")
         @input << c
         @trigger << "*"
 
@@ -208,6 +223,10 @@ module Puma
       end
 
       @thread.join
+    end
+
+    def debug_p(msg)
+      puts "\e[1;34mt: #{debug_time}, pid: #{$$}, thread: #{Thread.current.object_id.to_s.slice(-5,5)}, reactor: #{self.object_id.to_s.slice(-5,5)}, waiting: #{@input.size}, msg: #{msg}\e[0m"
     end
   end
 end

@@ -1,5 +1,14 @@
 require 'thread'
 
+class Object
+  def debug_time
+    t = Time.now.to_f
+    @@t0 ||= t
+
+    ((t - @@t0) * 1000).round(1)
+  end
+end
+
 module Puma
   # A simple thread pool management object.
   #
@@ -72,6 +81,9 @@ module Puma
       @spawned += 1
 
       th = Thread.new(@spawned) do |spawned|
+        debug_p = lambda do |msg|
+          puts "\e[1;34mt: #{debug_time}, pid: #{$$}, thread: #{Thread.current.object_id.to_s.slice(-5,5)}, spawn: #{spawned}, todo: #{todo.size}, waiting: #{@waiting}, msg: #{msg}\e[0m"
+        end
         # Thread name is new in Ruby 2.3
         Thread.current.name = 'puma %03i' % spawned if Thread.current.respond_to?(:name=)
         todo  = @todo
@@ -103,6 +115,7 @@ module Puma
 
               @waiting += 1
               not_full.signal
+              debug_p.call "waiting for work"
               not_empty.wait mutex
               @waiting -= 1
             end
@@ -117,6 +130,7 @@ module Puma
           end
 
           begin
+            debug_p.call "doing work (#{work.object_id.to_s.slice(-5,5)})"
             block.call(work, *extra)
           rescue Exception => e
             STDERR.puts "Error reached top of thread-pool: #{e.message} (#{e.class})"
@@ -142,7 +156,7 @@ module Puma
         if @shutdown
           raise "Unable to add work while shutting down"
         end
-
+        debug_p("adding work (#{work.object_id.to_s.slice(-5,5)})")
         @todo << work
 
         if @waiting < @todo.size and @spawned < @max
@@ -300,6 +314,10 @@ module Puma
 
       @spawned = 0
       @workers = []
+    end
+
+    def debug_p(msg)
+      puts "\e[1;34mt: #{debug_time}, pid: #{$$}, thread: #{Thread.current.object_id.to_s.slice(-5,5)}, pool: #{self.object_id.to_s.slice(-5,5)}, todo: #{@todo.size}, waiting: #{@waiting} msg: #{msg}\e[0m"
     end
   end
 end

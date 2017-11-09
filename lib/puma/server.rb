@@ -621,6 +621,7 @@ module Puma
 
       begin
         begin
+          debug_p("calling ruby app with request (#{client.object_id.to_s.slice(-5,5)})")
           status, headers, res_body = @app.call(env)
 
           return :async if req.hijacked
@@ -753,6 +754,7 @@ module Puma
           return :async
         end
 
+        debug_p("writing response (#{client.object_id.to_s.slice(-5,5)})")
         begin
           res_body.each do |part|
             if chunked
@@ -772,6 +774,7 @@ module Puma
             fast_write client, CLOSE_CHUNKED
             client.flush
           end
+          debug_p("done writing response (#{client.object_id.to_s.slice(-5,5)})")
         rescue SystemCallError, IOError
           raise ConnectionError, "Connection error detected during write"
         end
@@ -978,6 +981,10 @@ module Puma
 
     def shutting_down?
       @status == :stop || @status == :restart
+    end
+
+    def debug_p(msg)
+      puts "\e[1;34mt: #{debug_time}, pid: #{$$}, thread: #{Thread.current.object_id.to_s.slice(-5,5)}, server: #{self.object_id.to_s.slice(-5,5)}, msg: #{msg}\e[0m"
     end
   end
 end
