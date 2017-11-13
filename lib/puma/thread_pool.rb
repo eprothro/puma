@@ -153,16 +153,24 @@ module Puma
       end
     end
 
-    def wait_until_not_full
+    def wait_until_not_full(buffer)
+      buffer ||= []
       @mutex.synchronize do
         while true
           return if @shutdown
-          return if @waiting > 0
+
+          # we've must keep sufficient availability for
+          # the connections we've accepted and are watching
+          reading = buffer.size
+          overcommit = 0
+          outstanding = @todo.size + reading - overcommit
+
+          return if @waiting > outstanding
 
           # If we can still spin up new threads and there
           # is work queued, then accept more work until we would
           # spin up the max number of threads.
-          return if @todo.size < @max - @spawned
+          return if outstanding < @max - @spawned
 
           @not_full.wait @mutex
         end

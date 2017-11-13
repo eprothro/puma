@@ -32,7 +32,11 @@ module Puma
           if sockets.any? { |socket| socket.closed? }
             STDERR.puts "Error in select: #{e.message} (#{e.class})"
             STDERR.puts e.backtrace
-            sockets = sockets.reject { |socket| socket.closed? }
+            sockets.each do |socket|
+              @mutex.synchronize do
+                remove(socket) if socket.closed?
+              end
+            end
             retry
           else
             raise
@@ -45,15 +49,15 @@ module Puma
               @mutex.synchronize do
                 case @ready.read(1)
                 when "*"
-                  sockets += @input
+                  sockets.concat(@input)
                   @input.clear
                 when "c"
-                  sockets.delete_if do |s|
+                  sockets.each do |s|
                     if s == @ready
-                      false
+                      # carry on
                     else
                       s.close
-                      true
+                      remove(socket)
                     end
                   end
                 when "!"
@@ -73,7 +77,7 @@ module Puma
               begin
                 if c.try_to_finish
                   @app_pool << c
-                  sockets.delete c
+                  remove(c)
                 end
 
               # Don't report these to the lowlevel_error handler, otherwise
@@ -83,7 +87,7 @@ module Puma
                 c.write_500
                 c.close
 
-                sockets.delete c
+                remove(c)
 
               # SSL handshake failure
               rescue MiniSSL::SSLError => e
@@ -94,7 +98,7 @@ module Puma
                 cert = ssl_socket.peercert
 
                 c.close
-                sockets.delete c
+                remove(c)
 
                 @events.ssl_error @server, addr, cert, e
 
@@ -105,7 +109,7 @@ module Puma
                 c.write_400
                 c.close
 
-                sockets.delete c
+                remove(c)
 
                 @events.parse_error @server, c.env, e
               rescue StandardError => e
@@ -114,7 +118,7 @@ module Puma
                 c.write_500
                 c.close
 
-                sockets.delete c
+                remove(c)
               end
             end
           end
@@ -128,7 +132,7 @@ module Puma
               c = @timeouts.shift
               c.write_408 if c.in_data_phase
               c.close
-              sockets.delete c
+              remove(c)
 
               break if @timeouts.empty?
             end
@@ -136,6 +140,15 @@ module Puma
             calculate_sleep
           end
         end
+      end
+    end
+
+    # must have mutex locked when calling
+    def remove(c)
+      if @sockets.delete(c)
+        # this is a total hack, not thread safe
+        # and only for spike/validation purposes!
+        @app_pool.instance_variable_get(:@not_full).signal
       end
     end
 
@@ -188,6 +201,15 @@ module Puma
 
           calculate_sleep
         end
+      end
+    end
+
+    # The number of connections being watched
+    def size
+      @mutex.synchronize do
+        count = @sockets.size
+        count -= 1 if @sockets.include?(@ready)
+        count
       end
     end
 

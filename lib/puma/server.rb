@@ -366,7 +366,7 @@ module Puma
                     end
 
                     pool << client
-                    pool.wait_until_not_full
+                    pool.wait_until_not_full(@reactor)
                   end
                 rescue SystemCallError
                   # nothing
